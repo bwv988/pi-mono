@@ -5,7 +5,11 @@
  * Assumes OpenAI-compatible API with Chat Completions endpoint.
  *
  * Usage:
- *   pi -e ./packages/coding-agent/examples/extensions/custom-provider-databricks
+ * DATABRICKS_HOST_URL="<URL>" \
+ * DATABRICKS_BASE_PATH="/ai-gateway/mlflow/v1" \
+ * DATABRICKS_TOKEN="<TOKEN>" \
+ * pi -e /path/to/extension --model databricks/databricks-gpt-oss-120b -p "Say hello in 3 words"
+ * 
  *
  * Environment variables:
  *   DATABRICKS_HOST_URL   - Databricks workspace URL (e.g., https://dbc-xxx.cloud.databricks.com)

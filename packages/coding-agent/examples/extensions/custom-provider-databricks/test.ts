@@ -1,82 +1,55 @@
 /**
  * Test script for Databricks extension
- * Run: npx tsx test.ts [model-id] [--thinking]
+ * Run: npx tsx test.ts [model-id]
  *
- * Examples:
- *   npx tsx test.ts                              # Test default (databricks-dolly-v2-12b)
- *   npx tsx test.ts databricks-mosaic-gpt-neo     # Test Mosaic GPT Neo
- *   npx tsx test.ts databricks-dolly-v2-12b --thinking
+ * Tests the OpenAI-compatible endpoint directly.
+ * Requires DATABRICKS_HOST_URL, DATABRICKS_BASE_PATH, and DATABRICKS_TOKEN env vars.
  */
 
-import { type Api, type Context, type Model, registerApiProvider, streamSimple } from "@mariozechner/pi-ai";
-import { readFileSync } from "fs";
-import { getAgentDir } from "packages/coding-agent/src/config.js";
-import { join } from "path";
-import { MODELS, streamDatabricks } from "./index.js";
+import OpenAI from "openai";
 
-const MODEL_MAP = new Map(MODELS.map((m) => [m.id, m]));
+const host = process.env.DATABRICKS_HOST_URL || "https://example-workspace.cloud.databricks.com";
+const basePath = process.env.DATABRICKS_BASE_PATH || "/ai-gateway/mlflow/v1";
+const apiKey = process.env.DATABRICKS_TOKEN;
+
+if (!apiKey) {
+	console.error("Set DATABRICKS_TOKEN env var");
+	process.exit(1);
+}
+
+const client = new OpenAI({
+	apiKey,
+	baseURL: `${host}${basePath}`,
+	dangerouslyAllowBrowser: true,
+});
 
 async function main() {
-	const modelId = process.argv[2] || "databricks-dolly-v2-12b";
-	const useThinking = process.argv.includes("--thinking");
+	const modelId = process.argv[2] || "databricks-gpt-oss-120b";
+	console.log(`Testing model: ${modelId}\n`);
 
-	const cfg = MODEL_MAP.get(modelId);
-	if (!cfg) {
-		console.error(`Unknown model: ${modelId}`);
-		console.error("Available:", MODELS.map((m) => m.id).join(", "));
-		process.exit(1);
-	}
-
-	// Read auth
-	const authPath = join(getAgentDir(), "extensions", "auth.json");
-	const authData = JSON.parse(readFileSync(authPath, "utf-8"));
-	const databricksCred = authData["databricks"];
-	if (!databricksCred?.access) {
-		console.error("No databricks credentials. Run /login databricks first.");
-		process.exit(1);
-	}
-
-	// Register provider
-	registerApiProvider({
-		api: "databricks-api" as Api,
-		stream: streamDatabricks,
-		streamSimple: streamDatabricks,
+	const stream = await client.chat.completions.create({
+		model: modelId,
+		messages: [
+			{ role: "system", content: "You are a helpful assistant. Be concise." },
+			{ role: "user", content: "Say hello in 3 words" },
+		],
+		stream: true,
+		max_tokens: 100,
 	});
 
-	// Create model
-	const model: Model<Api> = {
-		id: cfg.id,
-		name: cfg.name,
-		api: "databricks-api" as Api,
-		provider: "databricks",
-		baseUrl: cfg.baseUrl,
-		reasoning: cfg.reasoning,
-		input: cfg.input,
-		cost: cfg.cost,
-		contextWindow: cfg.contextWindow,
-		maxTokens: cfg.maxTokens,
-	};
-
-	const context: Context = {
-		messages: [{ role: "user", content: "Say hello in exactly 3 words.", timestamp: Date.now() }],
-	};
-
-	console.log(`Model: ${model.id}, Backend: ${cfg.backend}, Thinking: ${useThinking}`);
-
-	const stream = streamSimple(model, context, {
-		apiKey: databricksCred.access,
-		maxTokens: 100,
-		reasoning: useThinking ? "low" : undefined,
-	});
-
-	for await (const event of stream) {
-		if (event.type === "thinking_start") console.log("[Thinking]");
-		else if (event.type === "thinking_delta") process.stdout.write(event.delta);
-		else if (event.type === "thinking_end") console.log("\n[/Thinking]\n");
-		else if (event.type === "text_delta") process.stdout.write(event.delta);
-		else if (event.type === "error") console.error("\nError:", event.error.errorMessage);
-		else if (event.type === "done") console.log("\n\nDone!", event.reason, event.message.usage);
+	for await (const chunk of stream) {
+		const content = chunk.choices?.[0]?.delta?.content;
+		if (typeof content === "string") {
+			process.stdout.write(content);
+		} else if (Array.isArray(content)) {
+			for (const part of content) {
+				if (part.type === "text" && typeof part.text === "string") {
+					process.stdout.write(part.text);
+				}
+			}
+		}
 	}
+	console.log("\n\nDone");
 }
 
 main().catch(console.error);
